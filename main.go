@@ -10,7 +10,7 @@ import (
 )
 
 type Server struct {
-	index      *template.Template
+	index *template.Template
 }
 
 func makeServer() (*Server, error) {
@@ -36,9 +36,9 @@ func (server *Server) getIndex(writer http.ResponseWriter, request *http.Request
 		return
 	}
 	connection.BusyTimeout(5 * time.Second)
-	defer connection.Close();
+	defer connection.Close()
 
-	listPosts, error := connection.Prepare(`SELECT content FROM posts LIMIT 10`)
+	listPosts, error := connection.Prepare(`SELECT content FROM posts ORDER BY created DESC LIMIT 10`)
 	if error != nil {
 		log.Print("Failed to prepare statement: ", error)
 		http.Error(writer, "Server error", http.StatusInternalServerError)
@@ -60,21 +60,21 @@ func (server *Server) getIndex(writer http.ResponseWriter, request *http.Request
 			http.Error(writer, "Server error", http.StatusInternalServerError)
 			return
 		}
-		
+
 		if !hasRow {
 			break
 		}
 
-		var post string
-		error = listPosts.Scan(&post)
+		var content string
+		error = listPosts.Scan(&content)
 		if error != nil {
 			log.Print("Failed to list posts: ", error)
 			http.Error(writer, "Server error", http.StatusInternalServerError)
 			return
 		}
-		posts = append(posts, post)
+		posts = append(posts, content)
 	}
-	
+
 	index := server.index
 	error = index.Execute(writer, posts)
 	if error != nil {
@@ -111,9 +111,9 @@ func (server *Server) submitPost(writer http.ResponseWriter, request *http.Reque
 		return
 	}
 	connection.BusyTimeout(5 * time.Second)
-	defer connection.Close();
+	defer connection.Close()
 
-	insertPost, error := connection.Prepare(`INSERT INTO posts VALUES (?, ?)`)
+	insertPost, error := connection.Prepare(`INSERT INTO posts (id, content) VALUES (?, ?)`)
 	if error != nil {
 		log.Print("Failed to prepare statement: ", error)
 		http.Error(writer, "Server error", http.StatusInternalServerError)
@@ -134,7 +134,7 @@ func (server *Server) submitPost(writer http.ResponseWriter, request *http.Reque
 
 func main() {
 	rand.Seed(time.Now().UnixNano())
-	
+
 	server, error := makeServer()
 	if error != nil {
 		log.Fatal(error)
