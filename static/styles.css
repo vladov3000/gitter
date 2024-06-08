@@ -1,0 +1,43 @@
+body {
+    background-color: #111111;
+    color: white;
+}
+
+.create {
+    border: solid lightgrey 1px;
+    border-bottom: 0;
+    width: 100%;
+}
+
+.create textarea {
+    resize: none;
+    box-sizing: content-box;
+    width: 90%;
+    height: 100px;
+    background-color: #111111;
+    color: white;
+    border: none;
+    margin-left: 20px;
+    margin-right: 20px;
+    outline: none;
+}
+
+.create hr {
+    width: 90%;
+    color: lightgrey;
+}
+
+.create input {
+    background-color: #22AA88;
+    border-radius: 10px;
+    border: none;
+    color: white;
+    padding: 10px;
+    margin: 10px;
+}
+
+.post {
+    border: solid lightgrey 1px;
+    padding-left: 5px;
+    padding-right: 5px;
+}

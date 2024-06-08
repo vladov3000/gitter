@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Gitter</title>
+    <link rel="stylesheet" type="text/css" href="/static/styles.css">
+    <script src="/static/script.js"></script>
+  </head>
+  <body>
+    <div>
+      <form class="create" action="/post" method="post">
+	<textarea name="message" placeholder="What's up???" required></textarea>
+	<hr>
+	<input type="submit" value="Post"></input>
+      </form>
+    </div>
+    <div>
+      {{range .}}
+      <div class="post">
+	<p>{{.}}</p>
+      </div>
+      {{end}}
+    </div>
+  </body>
+</html>
