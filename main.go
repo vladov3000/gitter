@@ -6,6 +6,7 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"strconv"
 	"sync/atomic"
 	"time"
 )
@@ -25,8 +26,41 @@ func makeServer() (*Server, error) {
 	if error != nil {
 		return nil, error
 	}
-	
+
+	connection, error := gosqlite.Open("gitter.db")
+	if error != nil {
+		return nil, error
+	}
+	defer connection.Close()
+
+	getMaxPage, error := connection.Prepare(`SELECT MAX(page) FROM posts`)
+	if error != nil {
+		return nil, error
+	}
+	defer getMaxPage.Close()
+
+	error = getMaxPage.Exec()
+	if error != nil {
+		return nil, error
+	}
+
+	existsMaxPage, error := getMaxPage.Step()
+	if error != nil {
+		return nil, error
+	}
+
 	counter := atomic.Int64{}
+	if existsMaxPage {
+		var page int64
+		error = getMaxPage.Scan(&page)
+		if error != nil {
+			return nil, error
+		}
+		log.Printf("Found max page: %d", page)
+		counter.Add(page)
+	} else {
+		log.Print("Did not find max page.")
+	}
 
 	return &Server{index, counter}, nil
 }
@@ -47,14 +81,27 @@ func (server *Server) getIndex(writer http.ResponseWriter, request *http.Request
 	connection.BusyTimeout(5 * time.Second)
 	defer connection.Close()
 
-	listPosts, error := connection.Prepare(`SELECT content, created FROM posts ORDER BY created DESC LIMIT 10`)
+	listPosts, error := connection.Prepare(`SELECT content, created FROM posts WHERE page <= ? ORDER BY created DESC LIMIT 10`)
 	if error != nil {
 		log.Print("Failed to prepare statement: ", error)
 		http.Error(writer, "Server error", http.StatusInternalServerError)
 		return
 	}
+	defer listPosts.Close()
 
-	error = listPosts.Exec()
+	parameters := request.URL.Query()
+	pageParameters, _ := parameters["page"]
+	
+	var pageParameter int
+	if pageParameters != nil {
+		pageParameter, _ = strconv.Atoi(pageParameters[0])
+	}
+
+	postsPerPage := 10
+	page := server.counter.Load()
+	page -= int64(pageParameter * postsPerPage)
+	
+	error = listPosts.Exec(page)
 	if error != nil {
 		log.Print("Failed to list posts: ", error)
 		http.Error(writer, "Server error", http.StatusInternalServerError)
@@ -124,7 +171,7 @@ func (server *Server) submitPost(writer http.ResponseWriter, request *http.Reque
 	connection.BusyTimeout(5 * time.Second)
 	defer connection.Close()
 
-	insertPost, error := connection.Prepare(`INSERT INTO posts (id, content) VALUES (?, ?)`)
+	insertPost, error := connection.Prepare(`INSERT INTO posts (id, page, content) VALUES (?, ?, ?)`)
 	if error != nil {
 		log.Print("Failed to prepare statement: ", error)
 		http.Error(writer, "Server error", http.StatusInternalServerError)
@@ -133,7 +180,8 @@ func (server *Server) submitPost(writer http.ResponseWriter, request *http.Reque
 	defer insertPost.Close()
 
 	id := rand.Int63()
-	error = insertPost.Exec(id, post[0])
+	page := server.counter.Add(1)
+	error = insertPost.Exec(id, page, post[0])
 	if error != nil {
 		log.Print("Failed to insert post: ", error)
 		http.Error(writer, "Server error", http.StatusInternalServerError)

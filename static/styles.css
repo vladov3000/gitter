@@ -5,7 +5,6 @@ body {
 
 .create {
     border: solid lightgrey 1px;
-    border-bottom: 0;
     width: 100%;
 }
 
