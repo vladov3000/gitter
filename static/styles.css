@@ -40,4 +40,12 @@ body {
     border: solid lightgrey 1px;
     padding-left: 5px;
     padding-right: 5px;
+    display: flex;
+    flex-direction: column;
+}
+
+.dateText {
+    font-size: 0.5rem;
+    margin-top: 0px;
+    color: lightgrey;
 }

@@ -16,7 +16,8 @@
     <div>
       {{range .}}
       <div class="post">
-	<p>{{.}}</p>
+	<p>{{.Content}}</p>
+	<p class="dateText">Created <span class="date">{{.Created}}</span>.</p>
       </div>
       {{end}}
     </div>

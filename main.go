@@ -6,11 +6,18 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"sync/atomic"
 	"time"
 )
 
 type Server struct {
-	index *template.Template
+	index   *template.Template
+	counter atomic.Int64
+}
+
+type Post struct {
+	Content string
+	Created int64
 }
 
 func makeServer() (*Server, error) {
@@ -18,8 +25,10 @@ func makeServer() (*Server, error) {
 	if error != nil {
 		return nil, error
 	}
+	
+	counter := atomic.Int64{}
 
-	return &Server{index}, nil
+	return &Server{index, counter}, nil
 }
 
 func (server *Server) getIndex(writer http.ResponseWriter, request *http.Request) {
@@ -38,7 +47,7 @@ func (server *Server) getIndex(writer http.ResponseWriter, request *http.Request
 	connection.BusyTimeout(5 * time.Second)
 	defer connection.Close()
 
-	listPosts, error := connection.Prepare(`SELECT content FROM posts ORDER BY created DESC LIMIT 10`)
+	listPosts, error := connection.Prepare(`SELECT content, created FROM posts ORDER BY created DESC LIMIT 10`)
 	if error != nil {
 		log.Print("Failed to prepare statement: ", error)
 		http.Error(writer, "Server error", http.StatusInternalServerError)
@@ -52,7 +61,7 @@ func (server *Server) getIndex(writer http.ResponseWriter, request *http.Request
 		return
 	}
 
-	var posts []string
+	var posts []Post
 	for {
 		hasRow, error := listPosts.Step()
 		if error != nil {
@@ -66,13 +75,15 @@ func (server *Server) getIndex(writer http.ResponseWriter, request *http.Request
 		}
 
 		var content string
-		error = listPosts.Scan(&content)
+		var created int64
+		error = listPosts.Scan(&content, &created)
 		if error != nil {
 			log.Print("Failed to list posts: ", error)
 			http.Error(writer, "Server error", http.StatusInternalServerError)
 			return
 		}
-		posts = append(posts, content)
+
+		posts = append(posts, Post{content, created})
 	}
 
 	index := server.index
