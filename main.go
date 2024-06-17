@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
+	"encoding/binary"
 	"github.com/eatonphil/gosqlite"
+	"golang.org/x/crypto/argon2"
 	"html/template"
 	"log"
 	"math/rand"
@@ -12,13 +15,17 @@ import (
 )
 
 type Server struct {
-	index   *template.Template
-	counter atomic.Int64
+	index    *template.Template
+	counter  atomic.Int64
+	sessions map[string]Session
 }
 
 type Post struct {
 	Content string
 	Created int64
+}
+
+type Session struct {
 }
 
 func makeServer() (*Server, error) {
@@ -62,7 +69,139 @@ func makeServer() (*Server, error) {
 		log.Print("Did not find max page.")
 	}
 
-	return &Server{index, counter}, nil
+	return &Server{index, counter, nil}, nil
+}
+
+func (server *Server) signUp(writer http.ResponseWriter, request *http.Request) {
+	log.Print("Signing up.")
+	if request.Method != http.MethodPost {
+		http.Error(writer, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	error := request.ParseForm()
+	if error != nil {
+		http.Error(writer, "Malformed form parameters", http.StatusBadRequest)
+		return
+	}
+
+	form := request.PostForm
+	username := form.Get("username")
+	password := form.Get("password")
+	if username == "" || password == "" {
+		http.Error(writer, "Missing message form parameter", http.StatusBadRequest)
+		return
+	}
+
+	id := rand.Int63()
+
+	salt := make([]byte, 8)
+	binary.LittleEndian.PutUint64(salt, uint64(id))
+
+	hashed_password := argon2.IDKey([]byte(password), salt, 1, 64*1024, 4, 32)
+
+	connection, error := gosqlite.Open("gitter.db")
+	if error != nil {
+		log.Print("Failed to open database connection: ", error)
+		http.Error(writer, "Server error", http.StatusInternalServerError)
+		return
+	}
+	connection.BusyTimeout(5 * time.Second)
+	defer connection.Close()
+
+	insertUser, error := connection.Prepare(`INSERT INTO users VALUES (?, ?, ?)`)
+	if error != nil {
+		log.Print("Failed to prepare statement: ", error)
+		http.Error(writer, "Server error", http.StatusInternalServerError)
+		return
+	}
+	defer insertUser.Close()
+
+	error = insertUser.Exec(id, username, hashed_password)
+	if error != nil {
+		log.Print("Failed to insert user: ", error)
+		http.Error(writer, "Server error", http.StatusInternalServerError)
+		return
+	}
+
+	http.Redirect(writer, request, "/", http.StatusSeeOther)
+}
+
+func (server *Server) login(writer http.ResponseWriter, request *http.Request) {
+	log.Print("Logging in.")
+	if request.Method != http.MethodPost {
+		http.Error(writer, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	error := request.ParseForm()
+	if error != nil {
+		http.Error(writer, "Malformed form parameters", http.StatusBadRequest)
+		return
+	}
+
+	form := request.PostForm
+	username := form.Get("username")
+	password := form.Get("password")
+	if username == "" || password == "" {
+		http.Error(writer, "Missing message form parameter", http.StatusBadRequest)
+		return
+	}
+
+	connection, error := gosqlite.Open("gitter.db")
+	if error != nil {
+		log.Print("Failed to open database connection: ", error)
+		http.Error(writer, "Server error", http.StatusInternalServerError)
+		return
+	}
+	connection.BusyTimeout(5 * time.Second)
+	defer connection.Close()
+
+	selectUser, error := connection.Prepare(`SELECT id, hashed_password FROM users WHERE username = ?`)
+	if error != nil {
+		log.Print("Failed to prepare statement: ", error)
+		http.Error(writer, "Server error", http.StatusInternalServerError)
+		return
+	}
+	defer selectUser.Close()
+
+	error = selectUser.Exec(username)
+	if error != nil {
+		log.Print("Failed to find user: ", error)
+		http.Error(writer, "Server error", http.StatusInternalServerError)
+		return
+	}
+
+	hasRow, error := selectUser.Step()
+	if error != nil {
+		log.Print("Failed to find user: ", error)
+		http.Error(writer, "Server error", http.StatusInternalServerError)
+		return
+	}
+	if !hasRow {
+		http.Error(writer, "Invalid username", http.StatusUnauthorized)
+		return
+	}
+
+	var id int64
+	var saved_hashed_password []byte
+	error = selectUser.Scan(&id, &saved_hashed_password)
+	if error != nil {
+		log.Print("Failed to select user: ", error)
+		http.Error(writer, "Server error", http.StatusInternalServerError)
+		return
+	}
+
+	salt := make([]byte, 8)
+	binary.LittleEndian.PutUint64(salt, uint64(id))
+
+	hashed_password := argon2.Key([]byte(password), salt, 1, 64*1024, 4, 32)
+	if bytes.Equal(hashed_password, saved_hashed_password) {
+		http.Error(writer, "Invalid password", http.StatusUnauthorized)
+		return
+	}
+
+	http.Redirect(writer, request, "/", http.StatusSeeOther)
 }
 
 func (server *Server) getIndex(writer http.ResponseWriter, request *http.Request) {
@@ -91,7 +230,7 @@ func (server *Server) getIndex(writer http.ResponseWriter, request *http.Request
 
 	parameters := request.URL.Query()
 	pageParameters, _ := parameters["page"]
-	
+
 	var pageParameter int
 	if pageParameters != nil {
 		pageParameter, _ = strconv.Atoi(pageParameters[0])
@@ -100,7 +239,7 @@ func (server *Server) getIndex(writer http.ResponseWriter, request *http.Request
 	postsPerPage := 10
 	page := server.counter.Load()
 	page -= int64(pageParameter * postsPerPage)
-	
+
 	error = listPosts.Exec(page)
 	if error != nil {
 		log.Print("Failed to list posts: ", error)
@@ -191,6 +330,12 @@ func (server *Server) submitPost(writer http.ResponseWriter, request *http.Reque
 	http.Redirect(writer, request, "/", http.StatusSeeOther)
 }
 
+func serveFile(name string) func(http.ResponseWriter, *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		http.ServeFile(writer, request, name);
+	}
+}
+
 func main() {
 	rand.Seed(time.Now().UnixNano())
 
@@ -199,8 +344,13 @@ func main() {
 		log.Fatal(error)
 	}
 
+	http.HandleFunc("/api/post", server.submitPost)
+	http.HandleFunc("/api/signUp", server.signUp)
+	http.HandleFunc("/api/login", server.login)
+	
 	http.HandleFunc("/", server.getIndex)
-	http.HandleFunc("/post", server.submitPost)
+	http.HandleFunc("/login", serveFile("static/login.html"))
+	http.HandleFunc("/signup", serveFile("static/signup.html"))
 	http.Handle("/static/", http.FileServer(http.Dir(".")))
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
